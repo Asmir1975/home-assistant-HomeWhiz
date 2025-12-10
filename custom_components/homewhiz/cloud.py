@@ -238,7 +238,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             _LOGGER.debug("Force read result: %s", result)
         except RuntimeError as e:
             if "AWS_ERROR_MQTT_NOT_CONNECTED" in str(e):
-                _LOGGER.warning("Force read failed: MQTT connection lost (%s)", e)
+                _LOGGER.debug("Force read failed: MQTT connection lost (%s)", e)
                 self._is_connected = False
             else:
                 _LOGGER.error("Force read failed with unexpected error: %s", e)
