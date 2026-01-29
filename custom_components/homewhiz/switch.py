@@ -19,6 +19,8 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 class HomeWhizSwitchEntity(HomeWhizEntity, SwitchEntity):
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: HomewhizCoordinator,
@@ -45,11 +47,33 @@ class HomeWhizSwitchEntity(HomeWhizEntity, SwitchEntity):
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    """Set up HomeWhiz switch entities."""
     data = build_entry_data(entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+
+    # CRITICAL FIX (Issue #295): Skip switch entities for read-only devices
+    if entry.data.get("config_missing") is True:
+        _LOGGER.debug(
+            "Skipping switch entities for read-only device '%s' (config_missing=True)",
+            entry.title,
+        )
+        return
+
+    try:
+        controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+    except Exception as err:
+        _LOGGER.error(
+            "Failed to generate controls for device '%s': %s",
+            entry.title,
+            err,
+            exc_info=True,
+        )
+        return
+
     write_enum_controls = [c for c in controls if isinstance(c, WriteBooleanControl)]
+
     _LOGGER.debug("Switches: %s", [c.key for c in write_enum_controls])
+
     async_add_entities(
         [
             HomeWhizSwitchEntity(coordinator, control, entry.title, data)
