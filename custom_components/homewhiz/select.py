@@ -92,13 +92,35 @@ class HomeWhizSelectEntity(HomeWhizEntity, SelectEntity):
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    """Set up HomeWhiz select entities."""
     data = build_entry_data(entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+
+    # CRITICAL FIX (Issue #295): Skip select entities for read-only devices
+    if entry.data.get("config_missing") is True:
+        _LOGGER.debug(
+            "Skipping select entities for read-only device '%s' (config_missing=True)",
+            entry.title,
+        )
+        return
+
+    try:
+        controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+    except Exception as err:
+        _LOGGER.error(
+            "Failed to generate controls for device '%s': %s",
+            entry.title,
+            err,
+            exc_info=True,
+        )
+        return
+
     write_enum_controls = [
         c for c in controls if isinstance(c, (WriteEnumControl, WriteNumericControl))
     ]
+
     _LOGGER.debug("Selects: %s", [c.key for c in write_enum_controls])
+
     async_add_entities(
         [
             HomeWhizSelectEntity(coordinator, control, entry.title, data)
