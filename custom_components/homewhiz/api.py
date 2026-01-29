@@ -14,6 +14,7 @@ from dacite import from_dict
 from .appliance_config import ApplianceConfiguration
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
+
 ALGORITHM = "AWS4-HMAC-SHA256"
 REGION = "eu-west-1"
 SERVICE = "execute-api"
@@ -102,12 +103,11 @@ def get_signature_key(
     kRegion = sign(kDate, region_name)
     kService = sign(kRegion, service_name)
     kSigning = sign(kService, "aws4_request")
-    return kSigning  # noqa: RET504
+    return kSigning
 
 
 async def login(username: str, password: str) -> LoginResponse:
     request_parameters = {"password": password, "username": username}
-
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "HomeWhiz/1.0",
@@ -123,6 +123,7 @@ async def login(username: str, password: str) -> LoginResponse:
         ) as response,
     ):
         contents = await response.json()
+
         if response.status != 200:
             _LOGGER.error(
                 "Login failed with HTTP %d: %s",
@@ -130,26 +131,27 @@ async def login(username: str, password: str) -> LoginResponse:
                 json.dumps(contents, indent=4),
             )
             raise LoginError(contents)
+
         if "success" in contents and not contents["success"]:
             _LOGGER.error(json.dumps(contents, indent=4))
             raise LoginError(contents)
+
         if "success" not in contents or "data" not in contents:
             _LOGGER.error(
-                "Unexpected response format: %s",
-                json.dumps(contents, indent=4),
+                "Unexpected response format: %s", json.dumps(contents, indent=4)
             )
             raise LoginError(contents)
+
         data = contents["data"]
         return from_dict(LoginResponse, data["credentials"])
 
 
 async def make_id_exchange_request(device_name: str) -> IdExchangeResponse:
     hsmid = device_name[4:]
-    headers = {
-        "User-Agent": "HomeWhiz/1.0",
-        "Accept": "application/json",
-    }
+    headers = {"User-Agent": "HomeWhiz/1.0", "Accept": "application/json"}
+
     _LOGGER.debug("hsmid: %s", hsmid)
+
     async with (
         aiohttp.ClientSession() as session,
         session.get(
@@ -160,6 +162,7 @@ async def make_id_exchange_request(device_name: str) -> IdExchangeResponse:
         if not response.ok:
             _LOGGER.error(await response.text())
             raise RequestError
+
         contents = json.loads(await response.text())
         return from_dict(IdExchangeResponse, contents)
 
@@ -175,8 +178,12 @@ async def make_get_contents_request(contents: ContentsDescription) -> Any:
         ) as response,
     ):
         if not response.ok:
-            _LOGGER.error(await response.text())
+            _LOGGER.debug(
+                "Config file not found (expected for read-only devices): %s",
+                await response.text(),
+            )
             raise RequestError
+
         return json.loads(await response.text())
 
 
@@ -188,13 +195,14 @@ async def make_api_get_request(
 ) -> Any:
     t = datetime.datetime.now(tz=datetime.UTC)
     amz_date = t.strftime("%Y%m%dT%H%M%SZ")
-    # Date w/o time, used in credential scope
     date_stamp = t.strftime("%Y%m%d")
+
     canonical_headers = (
         f"host:{host}\n"
         f"x-amz-date:{amz_date}\n"
         f"x-amz-security-token:{credentials.sessionToken}\n"
     )
+
     signed_headers = "host;x-amz-date;x-amz-security-token"
     payload_hash = hashlib.sha256(b"").hexdigest()
 
@@ -208,10 +216,13 @@ async def make_api_get_request(
     )
 
     _LOGGER.debug(
-        "Actual canonical request: {}".format(canonical_request.replace("\n", "\\n"))  # noqa: G001
+        "Actual canonical request: {}".format(
+            canonical_request.replace("\n", "\\n")
+        )  # noqa: G001
     )
 
     credential_scope = f"{date_stamp}/{REGION}/{SERVICE}/aws4_request"
+
     string_to_sign = (
         f"{ALGORITHM}\n"
         f"{amz_date}\n"
@@ -219,11 +230,13 @@ async def make_api_get_request(
         f"{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
     )
 
-    # Create the signing key using the function defined above.
-    signing_key = get_signature_key(credentials.secretKey, date_stamp, REGION, SERVICE)
+    signing_key = get_signature_key(
+        credentials.secretKey, date_stamp, REGION, SERVICE
+    )
     signature = hmac.new(
         signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
     ).hexdigest()
+
     authorization_header = (
         f"{ALGORITHM} "
         f"Credential={credentials.accessKey}/{credential_scope}, "
@@ -233,7 +246,7 @@ async def make_api_get_request(
 
     headers = {
         "x-amz-date": amz_date,
-        "x-amz-security-token": (credentials.sessionToken),
+        "x-amz-security-token": credentials.sessionToken,
         "Authorization": authorization_header,
         "User-Agent": "HomeWhiz/1.0",
         "Accept": "application/json",
@@ -241,11 +254,14 @@ async def make_api_get_request(
 
     async with aiohttp.ClientSession() as session:
         url = f"https://{host}{canonical_uri}"
+
         if canonical_querystring:
             url = f"{url}?{canonical_querystring}"
+
         async with session.get(url, headers=headers) as response:
             try:
                 contents = await response.json()
+
                 if response.status != 200:
                     _LOGGER.error(
                         "API request failed with HTTP %d: %s",
@@ -253,10 +269,13 @@ async def make_api_get_request(
                         json.dumps(contents, indent=4),
                     )
                     raise RequestError(contents)
+
                 if "success" in contents and not contents["success"]:
                     _LOGGER.error(json.dumps(contents, indent=4))
                     raise RequestError(contents)
-                return contents  # noqa: TRY300
+
+                return contents
+
             except ContentTypeError as err:
                 text = await response.text()
                 _LOGGER.error(text)
@@ -264,19 +283,23 @@ async def make_api_get_request(
 
 
 async def fetch_contents_index(
-    credentials: LoginResponse, app_id: str, language: str = "en-GB"
+    credentials: LoginResponse,
+    app_id: str,
+    language: str = "en-GB",
+    test_mode: bool = True,
 ) -> ContentsIndexResponse:
     response = await make_api_get_request(
         host="api.arcelikiot.com",
         canonical_uri="/procam/contents",
         canonical_querystring=(
             f"applianceId={app_id}&"
-            f"ctype=CONFIGURATION%2CLOCALIZATION&"
+            f"ctype=CONFIGURATION%2CLOCALIZATION%2CFUNCTIONAL_CONFIGURATION&"
             f"lang={language}&"
-            f"testMode=true"
+            f"testMode={'true' if test_mode else 'false'}"
         ),
         credentials=credentials,
     )
+
     return from_dict(ContentsIndexResponse, response["data"])
 
 
@@ -286,46 +309,158 @@ async def fetch_base_contents_index(
     response = await make_api_get_request(
         host="api.arcelikiot.com",
         canonical_uri="/procam/contents/subtype",
-        canonical_querystring=(
-            f"ctype=LOCALIZATION&lang={language}&subtype=NEW-HOMEWHIZ&testMode=false"
-        ),
+        canonical_querystring=f"ctype=LOCALIZATION&lang={language}&subtype=NEW-HOMEWHIZ&testMode=false",
         credentials=credentials,
     )
+
     return from_dict(ContentsIndexResponse, response["data"])
 
 
-async def fetch_localizations(contents_index: ContentsIndexResponse) -> dict[str, str]:
+async def fetch_localizations(
+    contents_index: ContentsIndexResponse,
+) -> dict[str, str]:
     localization_contents = [
-        content for content in contents_index.results if content.ctype == "LOCALIZATION"
+        c for c in contents_index.results if c.ctype == "LOCALIZATION"
     ]
+
     localizations = [
         {
             key.lower(): value
-            for key, value in (await make_get_contents_request(localization))[
+            for key, value in (await make_get_contents_request(loc))[
                 "localizations"
             ].items()
         }
-        for localization in localization_contents
+        for loc in localization_contents
     ]
 
-    return reduce(lambda a, b: a | b, localizations)
+    return reduce(lambda a, b: a | b, localizations) if localizations else {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Compatibility aliases (regression-safe)
+# These are added so config_flow.py can import the names it expects.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def fetch_localizations_contents_index(
+    contents_index: ContentsIndexResponse,
+) -> dict[str, str]:
+    return await fetch_localizations(contents_index)
+
+
+async def fetch_base_contents_index_response(
+    credentials: LoginResponse, language: str
+) -> ContentsIndexResponse:
+    # Optional alias in case other code uses this naming.
+    return await fetch_base_contents_index(credentials, language)
 
 
 async def fetch_appliance_contents(
-    credentials: LoginResponse, app_id: str, language: str = "en-GB"
-) -> ApplianceContents:
-    contents_index = await fetch_contents_index(credentials, app_id, language)
-    config_contents = [
-        content
-        for content in contents_index.results
-        if content.ctype == "CONFIGURATION"
-    ]
+    credentials: LoginResponse,
+    app_id: str,
+    language: str = "en-GB",
+) -> tuple[ApplianceContents, bool]:
+    """Fetch appliance configuration with guard for devices without CONFIGURATION (Issue #295).
+    
+    Returns:
+        tuple: (ApplianceContents, config_missing_flag)
+        - ApplianceContents: Always valid object (never None)
+        - config_missing_flag: True if device has no real ProcAM config (read-only device)
+    
+    Devices like Air Quality Sensors (Type 26) may only have LOCALIZATION, no CONFIGURATION.
+    In that case, config_missing=True is returned to trigger function-based sensors in sensor.py.
+    """
+    last_index: ContentsIndexResponse | None = None
 
-    config = await make_get_contents_request(config_contents[0])
-    localization = await fetch_localizations(contents_index)
+    for test_mode in (True, False):
+        contents_index = await fetch_contents_index(
+            credentials,
+            app_id,
+            language,
+            test_mode=test_mode,
+        )
 
-    return ApplianceContents(
-        config=from_dict(ApplianceConfiguration, config), localization=localization
+        last_index = contents_index
+
+        # Try CONFIGURATION first (standard devices)
+        config_contents = [
+            c for c in contents_index.results if c.ctype == "CONFIGURATION"
+        ]
+
+        if config_contents:
+            config = await make_get_contents_request(config_contents[0])
+            localization = await fetch_localizations(contents_index)
+
+            return (
+                ApplianceContents(
+                    config=from_dict(ApplianceConfiguration, config),
+                    localization=localization,
+                ),
+                False,  # Has real config
+            )
+
+        # Try FUNCTIONAL_CONFIGURATION (alternative for some devices, e.g., Air Quality Sensors)
+        functional_config_contents = [
+            c
+            for c in contents_index.results
+            if c.ctype == "FUNCTIONAL_CONFIGURATION"
+        ]
+
+        if functional_config_contents:
+            _LOGGER.info(
+                "Found FUNCTIONAL_CONFIGURATION instead of CONFIGURATION for appId=%s (test_mode=%s)",
+                app_id,
+                test_mode,
+            )
+            try:
+                config = await make_get_contents_request(functional_config_contents[0])
+                localization = await fetch_localizations(contents_index)
+
+                return (
+                    ApplianceContents(
+                        config=from_dict(ApplianceConfiguration, config),
+                        localization=localization,
+                    ),
+                    False,  # Has functional config
+                )
+            except RequestError as e:
+                _LOGGER.debug(
+                    "Failed to load FUNCTIONAL_CONFIGURATION: %s (will retry/skip)",
+                    e,
+                )
+
+        _LOGGER.debug(
+            "No CONFIGURATION/FUNCTIONAL_CONFIGURATION for applianceId=%s lang=%s testMode=%s; available ctypes=%s",
+            app_id,
+            language,
+            test_mode,
+            sorted({c.ctype for c in contents_index.results}),
+        )
+
+    # No config found: Return empty config + localizations for read-only devices
+    localization = await fetch_localizations(last_index) if last_index else {}
+
+    _LOGGER.info(
+        "No CONFIGURATION or FUNCTIONAL_CONFIGURATION returned for applianceId=%s lang=%s (tried testMode true/false). "
+        "Device may be read-only (Issue #295). Returning minimal config.",
+        app_id,
+        language,
+    )
+
+    # Return minimal config for read-only devices (e.g., Air Quality Sensors)
+    # This triggers config_missing=True in config_flow, which enables function-based sensors
+    minimal_config = {
+        "appliances": [],
+        "functions": [],
+        "controls": [],
+    }
+
+    return (
+        ApplianceContents(
+            config=from_dict(ApplianceConfiguration, minimal_config),
+            localization=localization,
+        ),
+        True,  # config_missing=True
     )
 
 
@@ -335,13 +470,18 @@ async def fetch_appliance_infos(credentials: LoginResponse) -> list[ApplianceInf
         credentials,
         canonical_uri="/my-homes",
     )
+
     homes = from_dict(MyHomesResponse, resp).data
-    appliances = []
+
+    appliances: list[ApplianceInfo] = []
+
     for home in homes:
         home_resp = await make_api_get_request(
             "smarthome.arcelikiot.com",
             credentials,
             canonical_uri=f"/my-homes/{home.id}",
         )
+
         appliances.extend(from_dict(HomeResponseData, home_resp["data"]).appliances)
+
     return appliances
