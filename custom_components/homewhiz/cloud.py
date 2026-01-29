@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -26,6 +26,13 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 @dataclass
+class Function:
+    """Represents a device function (for read-only devices like Air Quality Sensors)."""
+    func: str
+    val: Any = None
+
+
+@dataclass
 class Reported:
     connected: bool | str | None = None
     brand: str | int | None = None
@@ -38,6 +45,8 @@ class Reported:
     wfaSizeModifiedTime: int | None = None
     wfaSize: str | int | None = None
     wfaStartOffset: str | int = 26
+    # NEW: functions array for read-only devices (Air Quality Sensors, etc.)
+    functions: list[Function] | None = field(default_factory=lambda: None)
 
 
 @dataclass
@@ -56,6 +65,8 @@ class MqttPayload:
 
 
 class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
+    """Cloud coordinator with support for both WFA (bytearray) and functions (read-only) payloads."""
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -81,14 +92,14 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
     async def connect(self) -> bool:
         from awscrt.auth import AwsCredentialsProvider  # noqa: PLC0415
         from awscrt.exceptions import AwsCrtError  # noqa: PLC0415
-        from awsiot import (  # noqa: PLC0415
-            mqtt_connection_builder,
-        )
+        from awsiot import mqtt_connection_builder  # noqa: PLC0415
 
         _LOGGER.info("Connecting to %s", self._appliance_id)
+
         credentials = await login(
             self._cloud_config.username, self._cloud_config.password
         )
+
         expiration = datetime.fromtimestamp(credentials.expiration / 1000, tz=UTC)
         _LOGGER.debug("Credentials expire at: %s", expiration)
 
@@ -97,7 +108,9 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             session_token=credentials.sessionToken,
             secret_access_key=credentials.secretKey,
         )
+
         loop = asyncio.get_event_loop()
+
         mqtt_connection_builder_task = loop.run_in_executor(
             None,
             functools.partial(
@@ -112,8 +125,10 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 keep_alive_secs=1200,
             ),
         )
+
         connection = await mqtt_connection_builder_task
         self._connection = connection
+
         try:
             connection_future = connection.connect()
             await loop.run_in_executor(None, connection_future.result)
@@ -122,6 +137,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             _LOGGER.exception(
                 "Exception during connection to AWS occurred. Will retry in one minute."
             )
+
             self._entry.async_on_unload(
                 async_track_point_in_time(
                     hass=self.hass,
@@ -129,18 +145,23 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                     point_in_time=datetime.today() + timedelta(minutes=1),
                 )
             )
+
             return False
 
         self._is_connected = True
+
         await self._subscribe_to_topics()
 
         await asyncio.sleep(0.5)
+
         await self.force_read()
 
-        async_track_point_in_utc_time(
-            hass=self.hass,
-            action=self.refresh_connection,  # type: ignore[arg-type]
-            point_in_time=expiration - timedelta(minutes=1),
+        self._entry.async_on_unload(
+            async_track_point_in_utc_time(
+                hass=self.hass,
+                action=self.refresh_connection,  # type: ignore[arg-type]
+                point_in_time=expiration - timedelta(minutes=1),
+            )
         )
 
         if not self._update_timer_task:
@@ -149,9 +170,11 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 action=lambda _: self.hass.add_job(self.force_read()),
                 interval=timedelta(minutes=1),
             )
-            # FIX: Await get_shadow properly
-            await self.get_shadow()
-            _LOGGER.debug("Set hass time interval update")
+
+        # FIX: Await get_shadow properly
+        await self.get_shadow()
+
+        _LOGGER.debug("Set hass time interval update")
 
         return True
 
@@ -169,6 +192,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 payload
             ),
         )
+
         [subscribe_get, _] = self._connection.subscribe(
             f"$aws/things/{self._appliance_id}/shadow/get/accepted",
             self._mqtt.QoS.AT_LEAST_ONCE,
@@ -180,7 +204,9 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
         subscribe_update_result = await loop.run_in_executor(
             None, subscribe_update.result
         )
+
         subscribe_get_result = await loop.run_in_executor(None, subscribe_get.result)
+
         _LOGGER.debug("Subscribe to update result: %s", subscribe_update_result)
         _LOGGER.debug("Subscribe to get result: %s", subscribe_get_result)
 
@@ -198,6 +224,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             return_code,
             session_present,
         )
+
         self._is_connected = True
 
         if not session_present:
@@ -218,10 +245,12 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
     async def _async_refresh_connection(self) -> None:
         """Actual async logic for refreshing connection."""
         _LOGGER.debug("Refreshing connection")
+
         if self._connection is not None:
             loop = asyncio.get_event_loop()
             disconnect_future = self._connection.disconnect()
             await loop.run_in_executor(None, disconnect_future.result)
+
         await self.connect()
 
     def _handle_mqtt_disconnect_error(self, e: Exception, action: str) -> None:
@@ -229,6 +258,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             _LOGGER.warning("%s failed: MQTT connection lost: %s", action, e)
         else:
             _LOGGER.debug("%s attempted while MQTT disconnected: %s", action, e)
+
         self._is_connected = False
 
     async def force_read(self, *args: Any) -> None:
@@ -237,10 +267,13 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             return
 
         _LOGGER.debug("Forcing read")
+
         suffix = "/tuyacommand" if self._is_tuya else "/command"
+
         force_read_cmd = {
             "type": "fread" + suffix,
         }
+
         if self._is_tuya:
             force_read_cmd["applianceId"] = self._appliance_id
 
@@ -250,17 +283,22 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 json.dumps(force_read_cmd),
                 qos=self._mqtt.QoS.AT_MOST_ONCE,
             )
+
             loop = asyncio.get_event_loop()
+
             result = await loop.run_in_executor(
                 None, functools.partial(publish.result, timeout=5.0)
             )
+
             _LOGGER.debug("Force read result: %s", result)
+
         except RuntimeError as e:
             if "AWS_ERROR_MQTT_NOT_CONNECTED" in str(e):
                 self._handle_mqtt_disconnect_error(e, "Force read")
             else:
                 _LOGGER.exception("Force read failed with unexpected error")
                 raise
+
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Force read failed: %s", e)
 
@@ -276,18 +314,23 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 "{}",
                 qos=self._mqtt.QoS.AT_MOST_ONCE,
             )
+
             # FIX: Make non-blocking using executor
             loop = asyncio.get_event_loop()
+
             result = await loop.run_in_executor(
                 None, functools.partial(publish.result, timeout=5.0)
             )
+
             _LOGGER.debug("Get shadow result: %s", result)
+
         except RuntimeError as e:
             if "AWS_ERROR_MQTT_NOT_CONNECTED" in str(e):
                 self._handle_mqtt_disconnect_error(e, "Get shadow")
             else:
                 _LOGGER.exception("Get shadow failed with unexpected error")
                 raise
+
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Get shadow failed: %s", e)
 
@@ -297,12 +340,15 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             return
 
         suffix = "/tuyacommand" if self._is_tuya else "/command"
+
         obj = {
             "type": "write",
             "prm": f"[{command.index},{command.value}]",
         }
+
         if self._is_tuya:
             obj["applianceId"] = self._appliance_id
+
         message = json.dumps(obj)
 
         try:
@@ -311,13 +357,19 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 message,
                 qos=self._mqtt.QoS.AT_LEAST_ONCE,
             )
+
             _LOGGER.debug("Sending command %s:%s", command.index, command.value)
+
             loop = asyncio.get_event_loop()
+
             await loop.run_in_executor(
                 None, functools.partial(publish.result, timeout=5.0)
             )
+
             _LOGGER.debug("Command sent successfully")
+
             await asyncio.sleep(0.5)
+
             await self.force_read()
 
         except RuntimeError as e:
@@ -326,21 +378,72 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
             else:
                 _LOGGER.exception("Send command failed with unexpected error")
                 raise
+
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Failed to send command: %s", e)
 
     @callback
     def handle_notify(self, payload: str) -> None:
+        """Handle MQTT notify: Parse both WFA (bytearray) and functions (dict) payloads.
+        
+        Air Quality Sensor payload contains:
+        - state.reported.functions: [{'func': 'STT_CO2', 'val': '502'}, ...]
+        - functions-based data is sent as dict to coordinator
+        
+        Regular devices use:
+        - state.reported.wfa: bytearray
+        - wfa-based data is sent as bytearray to coordinator (backward compatible)
+        """
         _LOGGER.debug("Handling notify")
+
         try:
             message = from_dict(MqttPayload, json.loads(payload))
+
             if message.state and message.state.reported:
-                offset = int(message.state.reported.wfaStartOffset or 26)
-                wfa = message.state.reported.wfa or []
-                padding = [0 for _ in range(offset)]
-                data = bytearray(padding + wfa)
-                _LOGGER.debug("Message received: %s", data)
+                reported = message.state.reported
+                data: Any = None
+
+                # NEW: Try functions array first (Air Quality Sensors, read-only devices)
+                if hasattr(reported, "functions") and reported.functions:
+                    try:
+                        functions_dict = {}
+                        for func in reported.functions:
+                            if isinstance(func, dict):
+                                key = func.get("func", "unknown")
+                                val = func.get("val", None)
+                            else:
+                                key = func.func
+                                val = func.val
+
+                            # Parse numeric values
+                            try:
+                                if isinstance(val, str) and val.replace(".", "", 1).replace("-", "", 1).isdigit():
+                                    functions_dict[key] = float(val) if "." in str(val) else int(val)
+                                else:
+                                    functions_dict[key] = val
+                            except (ValueError, TypeError):
+                                functions_dict[key] = val
+
+                        data = functions_dict
+                        _LOGGER.info(
+                            "Functions parsed (read-only device): %s",
+                            {k: v for k, v in functions_dict.items() if k.startswith("STT_") or k.startswith("ATR_")}
+                        )
+
+                    except Exception as e:  # noqa: BLE001
+                        _LOGGER.warning("Failed to parse functions: %s", e)
+
+                # Fallback: Use WFA bytearray (backward compatible for traditional devices)
+                if data is None:
+                    offset = int(reported.wfaStartOffset or 26)
+                    wfa = reported.wfa or []
+                    padding = [0 for _ in range(offset)]
+                    data = bytearray(padding + wfa)
+                    _LOGGER.debug("WFA bytearray: len=%d", len(data))
+
+                _LOGGER.debug("Message processed: type=%s", type(data).__name__)
                 self.hass.loop.call_soon_threadsafe(self.async_set_updated_data, data)
+
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Error handling notify: %s", e)
 
@@ -351,10 +454,12 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
     async def kill(self) -> None:
         self._is_connected = False
         self.alive = False
+
         if self._connection is not None:
             loop = asyncio.get_event_loop()
             disconnect_future = self._connection.disconnect()
             await loop.run_in_executor(None, disconnect_future.result)
+
         if self._update_timer_task:
             self._update_timer_task()
             self._update_timer_task = None
