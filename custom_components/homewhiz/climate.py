@@ -158,11 +158,33 @@ class HomeWhizClimateEntity(HomeWhizEntity, ClimateEntity):
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    """Set up HomeWhiz climate entities."""
     data = build_entry_data(entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+
+    # CRITICAL FIX (Issue #295): Skip climate entities for read-only devices
+    if entry.data.get("config_missing") is True:
+        _LOGGER.debug(
+            "Skipping climate entities for read-only device '%s' (config_missing=True)",
+            entry.title,
+        )
+        return
+
+    try:
+        controls = generate_controls_from_config(entry.entry_id, data.contents.config)
+    except Exception as err:
+        _LOGGER.error(
+            "Failed to generate controls for device '%s': %s",
+            entry.title,
+            err,
+            exc_info=True,
+        )
+        return
+
     climate_controls = [c for c in controls if isinstance(c, ClimateControl)]
+
     _LOGGER.debug("ACs: %s", [c.key for c in climate_controls])
+
     async_add_entities(
         [
             HomeWhizClimateEntity(coordinator, control, entry.title, data)
