@@ -10,7 +10,7 @@ from homeassistant.components.bluetooth import (
     async_register_callback,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.requirements import RequirementsNotFound
 from homeassistant.util.package import install_package, is_installed
@@ -27,40 +27,36 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Setting up entry %s", entry.unique_id)
     address = entry.unique_id
+
     if "ids" not in entry.data:
         raise Exception(
-            "Appliance config not fetched from the API. "
-            "Please configure the integration again"
+            "Appliance config not fetched from the API. Please configure the integration again"
         )
-    if entry.data["cloud_config"] is not None:
+
+    if entry.data.get("cloud_config") is not None:
         return await setup_cloud(entry, hass)
+
     return await setup_bluetooth(address, entry, hass)
 
 
-async def setup_bluetooth(
-    address: str | None, entry: ConfigEntry, hass: HomeAssistant
-) -> bool:
+async def setup_bluetooth(address: str | None, entry: ConfigEntry, hass: HomeAssistant) -> bool:
     _LOGGER.info("Setting up bluetooth connection")
 
     if not entry.unique_id:
         _LOGGER.info("No unique entry id")
         return False
 
-    coordinator = hass.data.setdefault(DOMAIN, {})[entry.entry_id] = (
-        HomewhizBluetoothUpdateCoordinator(
-            hass, entry.unique_id, entry.options.get(CONF_BT_RECONNECT_INTERVAL)
-        )
+    coordinator = hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomewhizBluetoothUpdateCoordinator(
+        hass, entry.unique_id, entry.options.get(CONF_BT_RECONNECT_INTERVAL)
     )
 
     @callback
-    def connect(
-        service_info: BluetoothServiceInfoBleak,
-        change: BluetoothChange,
-    ) -> None:
+    def connect(service_info: BluetoothServiceInfoBleak, change: BluetoothChange) -> None:
         _LOGGER.debug("Called connect callback in setup_bluetooth")
         hass.async_create_task(coordinator.connect())
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     entry.async_on_unload(
         async_register_callback(
             hass,
@@ -70,7 +66,6 @@ async def setup_bluetooth(
         )
     )
 
-    # Set up listening to shutdown event
     def disconnect_service(_event) -> None:  # type: ignore
         _LOGGER.debug("Received shutdown event and triggering kill")
         hass.create_task(coordinator.kill())
@@ -97,18 +92,29 @@ async def setup_cloud(entry: ConfigEntry, hass: HomeAssistant) -> bool:
 
     ids = from_dict(IdExchangeResponse, entry.data["ids"])
     cloud_config = from_dict(CloudConfig, entry.data["cloud_config"])
-    coordinator = hass.data.setdefault(DOMAIN, {})[entry.entry_id] = (
-        HomewhizCloudUpdateCoordinator(hass, ids.appId, cloud_config, entry)
+
+    coordinator = hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomewhizCloudUpdateCoordinator(
+        hass, ids.appId, cloud_config, entry
     )
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Debug entries: only sensor platform (prevents unload errors for switch/binary_sensor)
+    if entry.data.get("config_missing") is True:
+        await hass.config_entries.async_forward_entry_setups(entry, (Platform.SENSOR,))
+    else:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     entry.async_create_task(hass, coordinator.connect())
+
     _LOGGER.info("Setup cloud connection successfully")
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Unloading entry %s", entry.unique_id)
+
     await hass.data[DOMAIN][entry.entry_id].kill()
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+
     return unload_ok
