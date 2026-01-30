@@ -4,6 +4,7 @@
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/python:3.13",
+	"onCreateCommand": "sudo rm -f /etc/apt/sources.list.d/yarn.list && sudo apt-get update",
 	"features": {
 		"ghcr.io/gvatsal60/dev-container-features/pre-commit:1": {}
 	},
