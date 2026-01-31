@@ -28,7 +28,7 @@ from .homewhiz import HomewhizCoordinator
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 ########################################################################################################
-# Function-based sensors for exotic (read-only) devices (e.g. Air Purifier, Issue #295):
+# Function-based sensors for exotic (read-only) devices (e.g. Air Quality Sensor, Issue #295):
 # - Maps function key (e.g. STT_CO2) to label, unit, icon, device_class
 # - Used only if no real config is present (config_missing=True)
 # - See async_setup_entry for activation logic
@@ -109,7 +109,7 @@ class HomeWhizSensorEntity(HomeWhizEntity, SensorEntity):
 
 
 class HomeWhizFunctionSensor(HomeWhizEntity, SensorEntity):
-    """Sensor for read-only devices using functions array (e.g., TR AirPurifier)."""
+    """Sensor for read-only devices using functions array (e.g., Air Quality Sensor)."""
 
     _attr_has_entity_name = True
 
@@ -223,7 +223,7 @@ async def async_setup_entry(
     data = build_entry_data(entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Debug-mode for Air Purifier (config_missing=True): no ProcAM config -> show raw payloads
+    # Debug-mode for Air Quality Sensor (config_missing=True): no ProcAM config -> show raw payloads
     if entry.data.get("config_missing") is True:
         # Many payloads are padded to offset=26 in cloud.py; showing from 0 is still useful.
         async_add_entities(
