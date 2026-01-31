@@ -337,7 +337,7 @@ async def fetch_localizations(
     Returns appliance config for classic and exotic HomeWhiz devices.
 
     - Classic devices (washer, dryer, oven, dishwasher): always have CONFIGURATION (WFA/bytearray).
-    - Exotic devices (e.g. Air Purifier): may lack CONFIGURATION, only LOCALIZATION or FUNCTIONAL_CONFIGURATION.
+    - Exotic devices (e.g. Air Quality Sensor): may lack CONFIGURATION, only LOCALIZATION or FUNCTIONAL_CONFIGURATION.
     - If no config is found, returns minimal config (see Issue #295) to enable function/debug sensors in sensor.py.
     - Common issue: backend provides no config for new/exotic devices → no entities created.
     """
@@ -363,7 +363,7 @@ async def fetch_appliance_contents(
 ) -> ApplianceContents:
     """Fetch appliance configuration with guard for devices without CONFIGURATION (Issue #295).
     
-    Devices like TR AirPurifier (Type 26) may only have LOCALIZATION, no CONFIGURATION.
+    Devices like Air Quality Sensor (Type 26) may only have LOCALIZATION, no CONFIGURATION.
     In that case, config_missing=True is set to trigger debug mode in sensor.py.
     """
     last_index: ContentsIndexResponse | None = None
@@ -392,7 +392,7 @@ async def fetch_appliance_contents(
                 localization=localization,
             )
 
-        # Try FUNCTIONAL_CONFIGURATION (alternative for some devices, e.g., TR AirPurifier)
+        # Try FUNCTIONAL_CONFIGURATION (alternative for some devices, e.g., Air Quality Sensor)
         functional_config_contents = [
             c
             for c in contents_index.results
@@ -437,7 +437,7 @@ async def fetch_appliance_contents(
         language,
     )
 
-    # Return minimal config for read-only devices (e.g., TR AirPurifier)
+    # Return minimal config for read-only devices (e.g., Air Quality Sensor)
     # This triggers config_missing=True in config_flow, which enables function-based sensors
     minimal_config = {
         "appliances": [],
