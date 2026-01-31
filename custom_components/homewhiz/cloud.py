@@ -27,7 +27,7 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 @dataclass
 class Function:
-    """Represents a device function (for read-only devices like TR AirPurifier)."""
+    """Represents a device function (for read-only devices like Air Quality Sensors)."""
     func: str
     val: Any = None
 
@@ -45,7 +45,7 @@ class Reported:
     wfaSizeModifiedTime: int | None = None
     wfaSize: str | int | None = None
     wfaStartOffset: str | int = 26
-    # NEW: functions array for read-only devices (TR AirPurifier, etc.)
+    # NEW: functions array for read-only devices (Air Quality Sensors, etc.)
     functions: list[Function] | None = field(default_factory=lambda: None)
 
 
@@ -384,11 +384,15 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
 
     @callback
     def handle_notify(self, payload: str) -> None:
-        """
-        Handles incoming MQTT messages for HomeWhiz devices.
-        - Exotic: state.reported.functions → dict to coordinator
-        - Classic: state.reported.wfa → bytearray to coordinator
-        - If empty/invalid: no entities created
+        """Handle MQTT notify: Parse both WFA (bytearray) and functions (dict) payloads.
+        
+        Air Quality Sensor payload contains:
+        - state.reported.functions: [{'func': 'STT_CO2', 'val': '502'}, ...]
+        - functions-based data is sent as dict to coordinator
+        
+        Regular devices use:
+        - state.reported.wfa: bytearray
+        - wfa-based data is sent as bytearray to coordinator (backward compatible)
         """
         _LOGGER.debug("Handling notify")
 
@@ -399,7 +403,7 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
                 reported = message.state.reported
                 data: Any = None
 
-                # NEW: Try functions array first (TR AirPurifier, read-only devices)
+                # NEW: Try functions array first (Air Quality Sensors, read-only devices)
                 if hasattr(reported, "functions") and reported.functions:
                     try:
                         functions_dict = {}
