@@ -25,6 +25,26 @@ from .homewhiz import Command, HomewhizCoordinator
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
+def _parse_function_value(val: Any) -> Any:
+    """Coerce numeric function strings to int/float, leave everything else as-is."""
+    if isinstance(val, str):
+        stripped = val.replace(".", "", 1).replace("-", "", 1)
+        if stripped.isdigit():
+            try:
+                return float(val) if "." in val else int(val)
+            except (ValueError, TypeError):
+                return val
+    return val
+
+
+@dataclass
+class Function:
+    """A single reported function for read-only devices #394."""
+
+    func: str
+    val: Any = None
+
+
 @dataclass
 class Reported:
     connected: bool | str | None = None
@@ -38,6 +58,9 @@ class Reported:
     wfaSizeModifiedTime: int | None = None
     wfaSize: str | int | None = None
     wfaStartOffset: str | int = 26
+    # Read-only devices (e.g. air quality sensor) report a functions array. 
+    # instead of a WFA bytearray. #394
+    functions: list[Function] | None = None
 
 
 @dataclass
@@ -380,11 +403,20 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
         try:
             message = from_dict(MqttPayload, json.loads(payload))
             if message.state and message.state.reported:
-                offset = int(message.state.reported.wfaStartOffset or 26)
-                wfa = message.state.reported.wfa or []
-                padding = [0 for _ in range(offset)]
-                data = bytearray(padding + wfa)
-                _LOGGER.debug("Message received: %s", data)
+                reported = message.state.reported
+                if reported.functions:
+                    # Read-only devices report a functions array. #394
+                    data: bytearray | dict[str, Any] = {
+                        func.func: _parse_function_value(func.val)
+                        for func in reported.functions
+                    }
+                    _LOGGER.debug("Functions received: %s", data)
+                else:
+                    offset = int(reported.wfaStartOffset or 26)
+                    wfa = reported.wfa or []
+                    padding = [0 for _ in range(offset)]
+                    data = bytearray(padding + wfa)
+                    _LOGGER.debug("Message received: %s", data)
                 self.hass.loop.call_soon_threadsafe(self.async_set_updated_data, data)
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Error handling notify: %s", e)
