@@ -268,7 +268,10 @@ async def make_api_get_request(
 
 
 async def fetch_contents_index(
-    credentials: LoginResponse, app_id: str, language: str = "en-GB"
+    credentials: LoginResponse,
+    app_id: str,
+    language: str = "en-GB",
+    test_mode: bool = True,
 ) -> ContentsIndexResponse:
     response = await make_api_get_request(
         host="api.arcelikiot.com",
@@ -277,7 +280,7 @@ async def fetch_contents_index(
             f"applianceId={app_id}&"
             f"ctype=CONFIGURATION%2CLOCALIZATION&"
             f"lang={language}&"
-            f"testMode=true"
+            f"testMode={'true' if test_mode else 'false'}"
         ),
         credentials=credentials,
     )
@@ -318,18 +321,41 @@ async def fetch_localizations(contents_index: ContentsIndexResponse) -> dict[str
 async def fetch_appliance_contents(
     credentials: LoginResponse, app_id: str, language: str = "en-GB"
 ) -> ApplianceContents:
-    contents_index = await fetch_contents_index(credentials, app_id, language)
-    config_contents = [
-        content
-        for content in contents_index.results
-        if content.ctype == "CONFIGURATION"
-    ]
+    last_index: ContentsIndexResponse | None = None
+    for test_mode in (True, False):
+        contents_index = await fetch_contents_index(
+            credentials, app_id, language, test_mode=test_mode
+        )
+        last_index = contents_index
 
-    config = await make_get_contents_request(config_contents[0])
-    localization = await fetch_localizations(contents_index)
+        config_contents = [
+            content
+            for content in contents_index.results
+            if content.ctype == "CONFIGURATION"
+        ]
+        if config_contents:
+            config = await make_get_contents_request(config_contents[0])
+            localization = await fetch_localizations(contents_index)
+            return ApplianceContents(
+                config=from_dict(ApplianceConfiguration, config),
+                localization=localization,
+            )
 
+    # No CONFIGURATION available: read-only device (e.g. air quality sensor).
+    # Such devices report their values as a functions array instead of a
+    # parsable config, so we return an empty config (platforms create no
+    # controls) plus localizations.
+    localization = (
+        await fetch_localizations(last_index) if last_index is not None else {}
+    )
+    _LOGGER.info(
+        "'%s' returned no device configuration — treating it as a read-only "
+        "device and exposing its reported values as sensors.",
+        app_id,
+    )
     return ApplianceContents(
-        config=from_dict(ApplianceConfiguration, config), localization=localization
+        config=from_dict(ApplianceConfiguration, {}),
+        localization=localization,
     )
 
 
