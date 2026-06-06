@@ -27,6 +27,22 @@ from .homewhiz import HomewhizCoordinator
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
+# Function-based sensors for read-only devices (AQ sensors). #394
+# key -> (label, unit, icon, device_class)
+FUNCTION_SENSORS: dict[
+    str, tuple[str, str | None, str | None, SensorDeviceClass | None]
+] = {
+    "STT_CO2": ("CO2", "ppm", "mdi:molecule-co2", SensorDeviceClass.CO2),
+    "STT_HUMIDITY": ("Humidity", "%", "mdi:water-percent", None),
+    "STT_TEMPERATURE": ("Temperature", "°C", "mdi:thermometer", None),
+    # STT_RAW_* (device-internal, uncompensated sensor readings) are not shown
+    # in the HomeWhiz app and confuse users → not exposed. #394
+    "STT_CO2_LEVEL": ("CO2 Level", None, None, SensorDeviceClass.ENUM),
+    "STT_HEALTH_STATUS": ("Health Status", None, None, SensorDeviceClass.ENUM),
+    "ATR_BRIGHTNESS": ("Brightness", None, "mdi:brightness-6", None),
+    "ATR_SLEEP_MODE": ("Sleep Mode", None, "mdi:sleep", None),
+}
+
 
 class HomeWhizSensorEntity(HomeWhizEntity, SensorEntity):
     def __init__(
@@ -85,11 +101,65 @@ class HomeWhizSensorEntity(HomeWhizEntity, SensorEntity):
         return self._control.get_value(self.coordinator.data)
 
 
+class HomeWhizFunctionSensor(HomeWhizEntity, SensorEntity):
+    """Sensor for read-only devices using a functions dict #394."""
+
+    def __init__(
+        self,
+        coordinator: HomewhizCoordinator,
+        device_name: str,
+        data: EntryData,
+        function_key: str,
+        label: str,
+        unit: str | None = None,
+        icon: str | None = None,
+        device_class: SensorDeviceClass | None = None,
+    ) -> None:
+        super().__init__(coordinator, device_name, function_key.lower(), data)
+        self._function_key = function_key
+        self._attr_name = label
+        self._attr_native_unit_of_measurement = unit
+        self._attr_icon = icon
+        self._attr_device_class = device_class
+
+    @property
+    def native_value(  # type: ignore[override]
+        self,
+    ) -> float | int | str | None:
+        if isinstance(self.coordinator.data, dict):
+            return self.coordinator.data.get(self._function_key)
+        return None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     data = build_entry_data(entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Read-only devices (AQ sensors) have no ProcAM
+    # config; expose their reported functions as plain sensors instead. #394
+    if entry.data.get("config_missing") is True:
+        async_add_entities(
+            HomeWhizFunctionSensor(
+                coordinator,
+                entry.title,
+                data,
+                func_key,
+                label,
+                unit=unit,
+                icon=icon,
+                device_class=device_class,
+            )
+            for func_key, (
+                label,
+                unit,
+                icon,
+                device_class,
+            ) in FUNCTION_SENSORS.items()
+        )
+        return
+
     controls = generate_controls_from_config(entry.entry_id, data.contents.config)
     _LOGGER.debug("Generated controls: %s", controls)
     sensor_controls = [
