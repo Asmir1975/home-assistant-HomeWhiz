@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import aiohttp
 from dacite import from_dict
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -58,7 +59,7 @@ class Reported:
     wfaSizeModifiedTime: int | None = None
     wfaSize: str | int | None = None
     wfaStartOffset: str | int = 26
-    # Read-only devices (e.g. air quality sensor) report a functions array. 
+    # Read-only devices (e.g. air quality sensor) report a functions array.
     # instead of a WFA bytearray. #394
     functions: list[Function] | None = None
 
@@ -109,9 +110,24 @@ class HomewhizCloudUpdateCoordinator(HomewhizCoordinator):
         )
 
         _LOGGER.info("Connecting to %s", self._appliance_id)
-        credentials = await login(
-            self._cloud_config.username, self._cloud_config.password
-        )
+        try:
+            credentials = await login(
+                self._cloud_config.username, self._cloud_config.password
+            )
+        except (TimeoutError, aiohttp.ClientError):
+            # Transient login failure (e.g. HA boots before DNS is ready after an
+            # outage): schedule a retry like the AwsCrtError path, don't die.
+            _LOGGER.exception(
+                "Login to the cloud failed (transient). Will retry in one minute."
+            )
+            self._entry.async_on_unload(
+                async_track_point_in_time(
+                    hass=self.hass,
+                    action=self.refresh_connection,  # type: ignore[arg-type]
+                    point_in_time=datetime.today() + timedelta(minutes=1),
+                )
+            )
+            return False
 
         expiration = datetime.fromtimestamp(credentials.expiration / 1000, tz=UTC)
         _LOGGER.debug("Credentials expire at: %s", expiration)
