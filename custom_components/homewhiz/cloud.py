@@ -26,6 +26,26 @@ from .homewhiz import Command, HomewhizCoordinator
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
+def _parse_function_value(val: Any) -> Any:
+    """Coerce numeric function strings to int/float, leave everything else as-is."""
+    if isinstance(val, str):
+        stripped = val.replace(".", "", 1).replace("-", "", 1)
+        if stripped.isdigit():
+            try:
+                return float(val) if "." in val else int(val)
+            except (ValueError, TypeError):
+                return val
+    return val
+
+
+@dataclass
+class Function:
+    """A single reported function for read-only devices #394."""
+
+    func: str
+    val: Any = None
+
+
 @dataclass
 class Reported:
     connected: bool | str | None = None
@@ -39,6 +59,9 @@ class Reported:
     wfaSizeModifiedTime: int | None = None
     wfaSize: str | int | None = None
     wfaStartOffset: str | int = 26
+    # Read-only devices (e.g. air quality sensor) report a functions array.
+    # instead of a WFA bytearray. #394
+    functions: list[Function] | None = None
 
 
 @dataclass
@@ -56,8 +79,11 @@ class MqttPayload:
     state: State | None = None
 
 
-def shadow_payload_to_data(payload: str) -> bytearray | None:
+def shadow_payload_to_data(payload: str) -> bytearray | dict[str, Any] | None:
     """Decode an AWS shadow payload into the raw device byte array.
+
+    Read-only devices (e.g. air quality sensors) report a functions array
+    instead of a WFA bytearray; those are returned as a dict. #394
 
     Returns None when the payload carries no reported state, or when the
     reported state is metadata-only (e.g. a connected/modifiedTime update)
@@ -66,6 +92,12 @@ def shadow_payload_to_data(payload: str) -> bytearray | None:
     message = from_dict(MqttPayload, json.loads(payload))
     if message.state and message.state.reported:
         reported = message.state.reported
+        if reported.functions:
+            # Read-only devices report a functions array. #394
+            return {
+                func.func: _parse_function_value(func.val)
+                for func in reported.functions
+            }
         if reported.wfa is None:
             return None
         offset = int(reported.wfaStartOffset or 26)
