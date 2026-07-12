@@ -50,6 +50,20 @@ class EntryData:
     contents: ApplianceContents
     appliance_info: ApplianceInfo | None
     cloud_config: CloudConfig | None
+    # True for read-only devices without a real ProcAM config (Issue #295).
+    config_missing: bool = False
+
+
+def has_real_config(contents: ApplianceContents) -> bool:
+    """Whether the device returned a real ProcAM config (Issue #295)."""
+    config = contents.config
+    return (
+        config.program is not None
+        or bool(config.subPrograms)
+        or bool(config.monitorings)
+        or config.deviceStates is not None
+        or config.commands is not None
+    )
 
 
 class TiltConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
@@ -223,6 +237,7 @@ class TiltConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
                 contents=contents,
                 appliance_info=appliance,
                 cloud_config=self._cloud_config,
+                config_missing=not has_real_config(contents),
             )
             return self.async_create_entry(
                 title=appliance.name,
