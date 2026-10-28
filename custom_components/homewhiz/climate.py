@@ -22,7 +22,7 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 class HomeWhizClimateEntity(HomeWhizEntity, ClimateEntity):
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     # https://developers.home-assistant.io/blog/2024/01/24/climate-climateentityfeatures-expanded/
     _enable_turn_on_off_backwards_compatibility = False
 
@@ -104,15 +104,15 @@ class HomeWhizClimateEntity(HomeWhizEntity, ClimateEntity):
         return self._control.target_temperature.bounds.step
 
     @property
-    def target_temperature_low(self) -> float:  # type: ignore[override]
+    def native_target_temperature_low(self) -> float:  # type: ignore[override]
         return self._control.target_temperature.bounds.lowerLimit
 
     @property
-    def target_temperature_high(self) -> float:  # type: ignore[override]
+    def native_target_temperature_high(self) -> float:  # type: ignore[override]
         return self._control.target_temperature.bounds.upperLimit
 
     @property
-    def target_temperature(self) -> float | None:  # type: ignore[override]
+    def native_target_temperature(self) -> float | None:  # type: ignore[override]
         if self.coordinator.data is None:
             return None
         return self._control.target_temperature.get_value(self.coordinator.data)
@@ -124,7 +124,7 @@ class HomeWhizClimateEntity(HomeWhizEntity, ClimateEntity):
         )
 
     @property
-    def current_temperature(self) -> float | None:  # type: ignore[override]
+    def native_current_temperature(self) -> float | None:  # type: ignore[override]
         return self._control.current_temperature.get_value(self.coordinator.data)
 
     @property
