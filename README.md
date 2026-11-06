@@ -6,7 +6,6 @@
 
 # HomeWhiz Integration for Home Assistant
 
-[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Integration-41BDF5?style=flat-square&logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
 [![Version](https://img.shields.io/github/v/release/home-assistant-HomeWhiz/home-assistant-HomeWhiz?style=flat-square&logo=github&color=41BDF5&logoColor=white)](https://github.com/home-assistant-HomeWhiz/home-assistant-HomeWhiz/releases)
 
